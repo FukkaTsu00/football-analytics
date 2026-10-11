@@ -1,0 +1,56 @@
+# Runs on every push and pull request: GitHub starts a fresh Linux machine,
+# installs the project and runs the checks. A red X means something broke.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: Lint + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Tests (pytest)
+        run: pytest -v --cov=football_analytics --cov-report=term
+
+  dag:
+    name: Airflow DAG loads
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Airflow + project (same command as the Dockerfile)
+        run: |
+          pip install "apache-airflow==2.10.5" -r requirements.txt pytest
+          pip install -e .
+
+      - name: Init a throwaway Airflow database
+        run: airflow db migrate
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      - name: Check the DAG imports and has the right tasks
+        run: pytest -v tests/test_pipeline.py -k dag
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
