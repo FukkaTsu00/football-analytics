@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/football_analytics/__init__.py
+src/football_analytics/config.py
+src/football_analytics/storage.py
+src/football_analytics.egg-info/PKG-INFO
+src/football_analytics.egg-info/SOURCES.txt
+src/football_analytics.egg-info/dependency_links.txt
+src/football_analytics.egg-info/top_level.txt

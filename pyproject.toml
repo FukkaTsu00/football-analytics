@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "football-analytics"
+version = "0.1.0"
+description = "Football news pipeline: Scrapy -> bronze/silver/gold -> Postgres, orchestrated by Airflow"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
