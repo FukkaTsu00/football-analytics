@@ -1,7 +1,41 @@
-# Local infrastructure. Start: docker compose up -d   Stop: docker compose down
-# Lesson 8 adds MinIO and Airflow to this file.
+# Football Analytics: local stack
+#   docker compose up -d --build
+#   Airflow  http://localhost:8080      MinIO console  http://localhost:9001
+#   Postgres warehouse on localhost:5440
+
+# Settings shared by the 3 Airflow containers (YAML anchor, reused below with <<: *airflow-common)
+x-airflow-common: &airflow-common
+  build: .
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    # Our pipeline's settings, as seen from INSIDE the Docker network:
+    # services reach each other by service name (minio, postgres-dw) on their internal ports
+    STORAGE_BACKEND: minio
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    WAREHOUSE_URL: postgresql+psycopg2://${DW_USER}:${DW_PASSWORD}@postgres-dw:5432/${DW_DB}
+    PYTHONPATH: /opt/airflow/src
+    SCRAPER_DIR: /opt/airflow/scraper
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./scraper:/opt/airflow/scraper
+    - ./logs:/opt/airflow/logs
+  depends_on: &airflow-depends-on
+    postgres-airflow:
+      condition: service_healthy
+    postgres-dw:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
 
 services:
+  # ---------- Data warehouse (our tables) ----------
   postgres-dw:
     image: postgres:16
     environment:
@@ -9,13 +43,80 @@ services:
       POSTGRES_PASSWORD: ${DW_PASSWORD}
       POSTGRES_DB: ${DW_DB}
     ports:
-      - "5440:5432"   # your PC's port 5440 -> the container's 5432 (avoids clashing with a local Postgres)
+      - "5440:5432"
     volumes:
-      - postgres_dw_data:/var/lib/postgresql/data   # data survives 'docker compose down'
+      - postgres_dw_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DW_USER} -d ${DW_DB}"]
       interval: 5s
       retries: 10
 
+  # ---------- Data lake (bronze / silver / gold files) ----------
+  minio:
+    image: minio/minio:latest
+    pull_policy: never   # Docker Hub deleted this image in 2026: use the copy already on this PC
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      retries: 10
+
+  # ---------- Airflow's own database (DAG runs, task states) ----------
+  postgres-airflow:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      retries: 10
+
+  # ---------- Airflow ----------
+  airflow-init:   # runs once: creates Airflow's tables and the admin user, then exits
+    <<: *airflow-common
+    command: >
+      bash -c "airflow db migrate &&
+      (airflow users create --username admin --password $${AIRFLOW_ADMIN_PASSWORD}
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/airflow
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    restart: "no"
+
+  airflow-webserver:   # the web UI
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      <<: *airflow-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:   # starts the runs on schedule and executes the tasks
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      <<: *airflow-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   postgres_dw_data:
+  postgres_airflow_data:
+  minio_data:

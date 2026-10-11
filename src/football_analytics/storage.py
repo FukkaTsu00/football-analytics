@@ -63,6 +63,7 @@ class MinioStorage:
 
     def __init__(self, settings: Settings) -> None:
         from minio import Minio  # imported here so dev/tests work without MinIO installed or running
+        from minio.error import S3Error
 
         self.bucket = settings.bucket
         self.client = Minio(
@@ -72,7 +73,12 @@ class MinioStorage:
             secure=settings.minio_secure,
         )
         if not self.client.bucket_exists(self.bucket):
-            self.client.make_bucket(self.bucket)
+            try:
+                self.client.make_bucket(self.bucket)
+            except S3Error as exc:
+                # Two Airflow tasks can try to create the bucket at the same moment: "already exists" is fine
+                if exc.code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+                    raise
 
     def put_bytes(self, key: str, data: bytes, content_type: str = "application/json") -> None:
         self.client.put_object(self.bucket, key, BytesIO(data), length=len(data), content_type=content_type)

@@ -1,5 +1,6 @@
 scrapy>=2.11,<3
 minio>=7.2
-sqlalchemy>=2.0
+# Airflow 2 needs SQLAlchemy 1.4; our code works with 1.4 and 2.x
+sqlalchemy>=1.4,<3
 psycopg2-binary>=2.9
 python-dotenv>=1.0
