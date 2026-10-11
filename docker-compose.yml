@@ -4,6 +4,19 @@
 #   Postgres warehouse on localhost:5440
 
 # Settings shared by the 3 Airflow containers (YAML anchor, reused below with <<: *airflow-common)
+  # ---------- Dashboard ----------
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard.Dockerfile
+    environment:
+      WAREHOUSE_URL: postgresql+psycopg2://${DW_USER}:${DW_PASSWORD}@postgres-dw:5432/${DW_DB}
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres-dw:
+        condition: service_healthy
+    restart: unless-stopped
 x-airflow-common: &airflow-common
   build: .
   environment:
